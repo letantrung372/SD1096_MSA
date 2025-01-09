@@ -4,7 +4,7 @@
 // Version: v1.0
 //========================================================================
 @Library('jenkins-ci@master') _
-microservicePipeline(
+frontendServicePipeline(
     script: this,
     type: 'frontend'    // or 'backend' for backend service
 )
