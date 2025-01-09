@@ -3,7 +3,7 @@
 // MSA Application CI
 // Version: v1.0
 //========================================================================
-@Library('jenkins-ci@main') _
+@Library('jenkins-ci@master') _
 microservicePipeline(
     script: this,
     type: 'frontend'    // or 'backend' for backend service

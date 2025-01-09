@@ -1,0 +1,148 @@
+trigger:
+  - master
+
+parameters:
+  - name: imageName
+    type: string
+  - name: k8sNamespace
+    type: string
+  - name: serviceName
+    type: string
+    default: 'frontend'
+  - name: environment
+    type: string
+    default: 'production'
+
+variables:
+  imageTag: '$(Build.BuildId)'
+  acrName: 'msademoacr'
+  acrLoginServer: '$(acrName).azurecr.io'
+  azureSubscription: 'arm-service-connection'
+  dockerImageName: '$(acrLoginServer)/${{ parameters.imageName }}'
+  acrServiceConnection: 'acr-service-connection'
+  aksServiceConnection: 'aks-service-connection'
+  k8sManifests: 'src/${{ parameters.serviceName }}/k8s/deployment.yaml'
+
+stages:
+- stage: BuildAndPush
+  displayName: 'Build and Push Docker Image'
+  jobs:
+  - job: BuildPushImage
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+      displayName: 'Checkout Source Code'
+      
+    - task: Docker@2
+      inputs:
+        command: build
+        dockerfile: '**/Dockerfile'
+        repository: ${{ parameters.imageName }}
+        tags: |
+          $(Build.BuildId)
+        arguments: '--build-arg BUILD_ID=$(Build.BuildId)'
+      displayName: 'Build Docker Image'
+
+    - script: |
+        docker tag ${{ parameters.imageName }}:$(Build.BuildId) $(dockerImageName):$(Build.BuildId)
+      displayName: 'Tag Docker Image'
+
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: $(azureSubscription)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr login --name $(acrName)
+          docker push $(dockerImageName):$(Build.BuildId)
+      displayName: 'Push Image to ACR'
+
+- stage: Deploy
+  displayName: 'Deploy to AKS'
+  dependsOn: BuildAndPush
+  jobs:
+  - deployment: DeployToAKS
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: ${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+            displayName: 'Checkout Source Code'
+
+          - task: Kubernetes@1
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceEndpoint: $(aksServiceConnection)
+              command: 'login'
+            displayName: 'Set up kubectl'
+
+          - bash: |
+              if ! kubectl get namespace ${{ parameters.k8sNamespace }}; then
+                echo "Namespace ${{ parameters.k8sNamespace }} does not exist. Creating..."
+                kubectl create namespace ${{ parameters.k8sNamespace }}
+              else
+                echo "Namespace ${{ parameters.k8sNamespace }} already exists"
+              fi
+            displayName: 'Create namespace if not exists'
+
+          - script: |
+              # Replace placeholders with actual values
+              sed -i 's|$(ServiceName)|${{ parameters.serviceName }}|g' src/${{ parameters.serviceName }}/k8s/deployment.yaml
+              sed -i 's|$(containerRegistry)|$(acrLoginServer)|g' src/${{ parameters.serviceName }}/k8s/deployment.yaml
+              sed -i 's|$(imageRepository)|${{ parameters.imageName }}|g' src/${{ parameters.serviceName }}/k8s/deployment.yaml
+              sed -i 's|$(tag)|$(Build.BuildId)|g' src/${{ parameters.serviceName }}/k8s/deployment.yaml
+              sed -i 's|$(Environment)|dev|g' src/${{ parameters.serviceName }}/k8s/deployment.yaml
+            displayName: 'Substitute Variables in Kubernetes Manifest'
+
+          - task: KubernetesManifest@0
+            inputs:
+              action: deploy
+              kubernetesServiceConnection: $(aksServiceConnection)
+              namespace: ${{ parameters.k8sNamespace }}
+              manifests: $(k8sManifests)
+              containers: |
+                $(dockerImageName):$(Build.BuildId)
+            displayName: 'Deploy to AKS'
+            env:
+              ServiceName: ${{ parameters.serviceName }}
+              Environment: ${{ parameters.environment }}
+              containerRegistry: $(acrLoginServer)
+              imageRepository: ${{ parameters.imageName }}
+              tag: $(Build.BuildId)
+
+- stage: Cleanup
+  displayName: 'Cleanup'
+  dependsOn: Deploy
+  condition: succeeded()
+  jobs:
+  - job: Cleanup
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: $(azureSubscription)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          docker system prune -f
+
+          az acr login --name $(acrName)
+
+          # Remove old images from ACR (keeping the last 5 tags)
+          az acr repository show-tags \
+            --name $(acrName) \
+            --repository ${{ parameters.imageName }} \
+            --orderby time_desc \
+            --output tsv | \
+          tail -n +6 | \
+          xargs -I% az acr repository delete \
+            --name $(acrName) \
+            --image ${{ parameters.imageName }}:% \
+            --yes || true
+
+          docker logout $(acrLoginServer)

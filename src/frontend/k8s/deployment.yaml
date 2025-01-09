@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $(ServiceName)
+  labels:
+    app: $(ServiceName)
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: $(ServiceName)
+  template:
+    metadata:
+      labels:
+        app: $(ServiceName)
+    spec:
+      containers:
+      - name: $(ServiceName)
+        image: $(containerRegistry)/$(imageRepository):$(tag)
+        ports:
+        - containerPort: 3000
+        env:
+        - name: ENVIRONMENT
+          value: $(Environment)
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: $(ServiceName)
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 3000
+      protocol: TCP
+      targetPort: 3000
+  selector:
+    app: $(ServiceName)

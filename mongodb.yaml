@@ -2,10 +2,10 @@
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: mongo-sc
-provisioner: kubernetes.io/aws-ebs
+  name: mongo-sc-azure
+provisioner: kubernetes.io/azure-disk
 parameters:
-  type: gp2
+  storageaccounttype: Standard_LRS  # You can choose Premium_LRS for premium storage
 volumeBindingMode: WaitForFirstConsumer
 
 ---
@@ -22,6 +22,9 @@ spec:
     - port: 27017
       protocol: TCP
       targetPort: 27017
+      nodePort: 30017
+  type: NodePort
+
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -29,6 +32,7 @@ metadata:
   name: mongo-config
 data:
   MONGODB_INITDB_ROOT_USERNAME: "user"
+
 ---
 apiVersion: v1
 kind: Secret
@@ -37,6 +41,7 @@ metadata:
 type: Opaque
 data:
   MONGODB_INITDB_ROOT_PASSWORD: cGFzc3dvcmQK
+
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -68,14 +73,12 @@ spec:
             - name: data-volume
               mountPath: /data/db
   volumeClaimTemplates:
-    - metadata:
-        name: data-volume
-      spec:
-        storageClassName: mongo-sc
-        accessModes:
-          - "ReadWriteOnce"
-        resources:
-          requests:
-            storage: "1Gi"
-
-
+  - metadata:
+      name: data-volume
+    spec:
+      storageClassName: mongo-sc-azure
+      accessModes:
+        - "ReadWriteOnce"
+      resources:
+        requests:
+          storage: "1Gi"

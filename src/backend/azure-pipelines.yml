@@ -1,0 +1,11 @@
+# azure-pipelines-backend.yml
+trigger:
+  - master
+
+extends:
+  template: ../azure-pipelines.yml
+  parameters:
+    imageName: 'backend-app'
+    k8sNamespace: 'msa-application-namespace'
+    serviceName: 'backend'
+    environment: 'dev'

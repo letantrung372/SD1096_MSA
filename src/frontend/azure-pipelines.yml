@@ -1,0 +1,11 @@
+# azure-pipelines-frontend.yml
+trigger:
+  - master
+
+extends:
+  template: ../azure-pipelines.yml
+  parameters:
+    imageName: 'frontend-app'
+    k8sNamespace: 'msa-application-namespace'
+    serviceName: 'frontend'
+    environment: 'dev'
